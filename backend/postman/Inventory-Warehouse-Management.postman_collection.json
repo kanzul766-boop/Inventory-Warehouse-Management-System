@@ -1,0 +1,3281 @@
+{
+  "info": {
+    "_postman_id": "a9b15cc3-1d3b-4c8f-a006-7bc384bb71d1",
+    "name": "Inventory & Warehouse Management - Integration",
+    "description": "PDF-aligned API integration suite. Before running, start the backend with MONGODB_URI set to a dedicated replica-set database whose name ends in _test, and manually verify the active backend configuration: Postman cannot inspect the server's MongoDB URI. Set testDatabaseConfirmed=true only after verification. The pre-request guard blocks non-local backend URLs and unconfirmed/non-test database names, but is not proof of the server's database target. Never point this suite at production. Login uses the HttpOnly cookie jar. Product/profile/logo image tests require a test ImageKit account and a local image file selected with imagePath.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const baseUrl = pm.environment.get('baseUrl') || '';",
+          "const databaseName = pm.environment.get('testDatabaseName') || '';",
+          "if (!/^http:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d+)?$/.test(baseUrl)) { throw new Error('Safety stop: baseUrl must be a local backend URL.'); }",
+          "if (pm.environment.get('testDatabaseConfirmed') !== 'true' || !/_test$/i.test(databaseName)) { throw new Error('Safety stop: confirm a dedicated MongoDB test database ending in _test first.'); }"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Authentication and sessions",
+      "item": [
+        {
+          "name": "Clear any prior Postman session",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('runId', Date.now().toString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('logout succeeds and clears the old session', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/logout"
+          }
+        },
+        {
+          "name": "Unauthenticated session is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('missing cookie returns 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me"
+          }
+        },
+        {
+          "name": "Public registration cannot create an admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('registration creates a safe default role', function () { pm.response.to.have.status(201); const data = pm.response.json(); pm.expect(data.user.role).to.eql('salesRepresentative'); pm.expect(data.user).not.to.have.property('password'); pm.collectionVariables.set('publicUserId', data.user.id); pm.collectionVariables.set('publicUsername', data.user.username); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_public_{{runId}}\",\"email\":\"postman_public_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\",\"role\":\"admin\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/register"
+          }
+        },
+        {
+          "name": "Duplicate registration is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('duplicate identity returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_public_{{runId}}\",\"email\":\"postman_public_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/register"
+          }
+        },
+        {
+          "name": "Invalid password login is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('invalid credentials return 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"{{publicUsername}}\",\"password\":\"deliberately-wrong-password\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Login as public user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login sets a safe HttpOnly session cookie', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.user.role).to.eql('salesRepresentative'); pm.expect(data.user).not.to.have.property('password'); const setCookie = pm.response.headers.get('Set-Cookie') || ''; pm.expect(setCookie.toLowerCase()).to.include('httponly'); pm.expect(setCookie.toLowerCase()).to.include('max-age='); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"{{publicUsername}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Session restores from HttpOnly cookie",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('authenticated profile is safe', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.user.role).to.eql('salesRepresentative'); pm.expect(data.user).not.to.have.property('password'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me"
+          }
+        },
+        {
+          "name": "Logout authenticated user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('logout succeeds', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/logout"
+          }
+        },
+        {
+          "name": "Session is rejected after logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('cleared cookie returns 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me"
+          }
+        },
+        {
+          "name": "Invalid JWT cookie is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('invalid token returns 401', function () { pm.response.to.have.status(401); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Cookie",
+                "value": "token=invalid.jwt.signature"
+              }
+            ],
+            "url": "{{baseUrl}}/api/auth/me"
+          }
+        },
+        {
+          "name": "Login as pre-provisioned test admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('admin login succeeds without returning password', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.user.role).to.eql('admin'); pm.expect(data.user).not.to.have.property('password'); pm.collectionVariables.set('adminId', data.user.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"{{adminUsername}}\",\"password\":\"{{adminPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Admin user management and roles",
+      "item": [
+        {
+          "name": "Admin creates warehouse manager",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse manager is created', function () { pm.response.to.have.status(201); const data = pm.response.json(); pm.expect(data.user.role).to.eql('warehouseManager'); pm.expect(data.user).not.to.have.property('password'); pm.collectionVariables.set('managerId', data.user.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_manager_{{runId}}\",\"email\":\"postman_manager_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\",\"role\":\"warehouseManager\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/users"
+          }
+        },
+        {
+          "name": "Admin creates supplier",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier is created', function () { pm.response.to.have.status(201); const data = pm.response.json(); pm.expect(data.user.role).to.eql('supplier'); pm.collectionVariables.set('supplierId', data.user.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_supplier_{{runId}}\",\"email\":\"postman_supplier_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\",\"role\":\"supplier\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/users"
+          }
+        },
+        {
+          "name": "Admin creates sales representative",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sales representative is created', function () { pm.response.to.have.status(201); const data = pm.response.json(); pm.expect(data.user.role).to.eql('salesRepresentative'); pm.collectionVariables.set('salesId', data.user.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_sales_{{runId}}\",\"email\":\"postman_sales_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\",\"role\":\"salesRepresentative\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/users"
+          }
+        },
+        {
+          "name": "Admin lists users without password hashes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('user list is safe', function () { pm.response.to.have.status(200); const users = pm.response.json().users; pm.expect(users).to.be.an('array'); users.forEach(function (user) { pm.expect(user).not.to.have.property('password'); }); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/users"
+          }
+        },
+        {
+          "name": "Admin updates a user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('user update succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.name).to.eql('Postman Integration Sales'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Postman Integration Sales\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/users/{{salesId}}"
+          }
+        },
+        {
+          "name": "Invalid user role update is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('invalid role returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"role\":\"superuser\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/users/{{salesId}}"
+          }
+        },
+        {
+          "name": "Delete own admin account is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('self-deletion returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/users/{{adminId}}"
+          }
+        },
+        {
+          "name": "Create disposable user for delete test",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('disposable user is created', function () { pm.response.to.have.status(201); pm.collectionVariables.set('deleteUserId', pm.response.json().user.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_delete_{{runId}}\",\"email\":\"postman_delete_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\",\"role\":\"salesRepresentative\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/users"
+          }
+        },
+        {
+          "name": "Delete unreferenced user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unreferenced user is deleted', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/users/{{deleteUserId}}"
+          }
+        },
+        {
+          "name": "Sales login before admin-only negative case",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sales user login succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('salesRepresentative'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_sales_{{runId}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Sales representative cannot create admin-managed users",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('non-admin create returns 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"forbidden_{{runId}}\",\"email\":\"forbidden_{{runId}}@example.test\",\"password\":\"{{testAccountPassword}}\",\"role\":\"admin\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/users"
+          }
+        },
+        {
+          "name": "Restore admin session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('admin login restored', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('admin'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"{{adminUsername}}\",\"password\":\"{{adminPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - ImageKit signed upload",
+      "item": [
+        {
+          "name": "Request ImageKit auth for product image A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('backend signs upload without returning private key', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.token).to.be.a('string'); pm.expect(data.signature).to.be.a('string'); pm.expect(data.expire).to.be.a('number'); pm.expect(data).not.to.have.property('privateKey'); pm.collectionVariables.set('ikTokenA', data.token); pm.collectionVariables.set('ikSignatureA', data.signature); pm.collectionVariables.set('ikExpireA', String(data.expire)); pm.collectionVariables.set('ikPublicKey', data.publicKey); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/upload/auth"
+          }
+        },
+        {
+          "name": "Upload product image A to test ImageKit account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ImageKit upload returns URL and file ID', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.url).to.be.a('string'); pm.expect(data.fileId).to.be.a('string'); pm.collectionVariables.set('imageAUrl', data.url); pm.collectionVariables.set('imageAFileId', data.fileId); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{imagePath}}"
+                },
+                {
+                  "key": "fileName",
+                  "value": "postman-product-a-{{runId}}.png",
+                  "type": "text"
+                },
+                {
+                  "key": "publicKey",
+                  "value": "{{ikPublicKey}}",
+                  "type": "text"
+                },
+                {
+                  "key": "token",
+                  "value": "{{ikTokenA}}",
+                  "type": "text"
+                },
+                {
+                  "key": "signature",
+                  "value": "{{ikSignatureA}}",
+                  "type": "text"
+                },
+                {
+                  "key": "expire",
+                  "value": "{{ikExpireA}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "https://upload.imagekit.io/api/v1/files/upload"
+          }
+        },
+        {
+          "name": "Request ImageKit auth for product image B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('second upload auth succeeds', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.collectionVariables.set('ikTokenB', data.token); pm.collectionVariables.set('ikSignatureB', data.signature); pm.collectionVariables.set('ikExpireB', String(data.expire)); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/upload/auth"
+          }
+        },
+        {
+          "name": "Upload product image B to test ImageKit account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('second ImageKit asset is returned', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.url).to.be.a('string'); pm.expect(data.fileId).to.be.a('string'); pm.collectionVariables.set('imageBUrl', data.url); pm.collectionVariables.set('imageBFileId', data.fileId); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{imagePath}}"
+                },
+                {
+                  "key": "fileName",
+                  "value": "postman-product-b-{{runId}}.png",
+                  "type": "text"
+                },
+                {
+                  "key": "publicKey",
+                  "value": "{{ikPublicKey}}",
+                  "type": "text"
+                },
+                {
+                  "key": "token",
+                  "value": "{{ikTokenB}}",
+                  "type": "text"
+                },
+                {
+                  "key": "signature",
+                  "value": "{{ikSignatureB}}",
+                  "type": "text"
+                },
+                {
+                  "key": "expire",
+                  "value": "{{ikExpireB}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "https://upload.imagekit.io/api/v1/files/upload"
+          }
+        },
+        {
+          "name": "Request ImageKit auth for disposable product image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('disposable image auth succeeds', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.collectionVariables.set('ikTokenC', data.token); pm.collectionVariables.set('ikSignatureC', data.signature); pm.collectionVariables.set('ikExpireC', String(data.expire)); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/upload/auth"
+          }
+        },
+        {
+          "name": "Upload disposable product image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('disposable ImageKit asset is returned', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.collectionVariables.set('imageCUrl', data.url); pm.collectionVariables.set('imageCFileId', data.fileId); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "{{imagePath}}"
+                },
+                {
+                  "key": "fileName",
+                  "value": "postman-disposable-{{runId}}.png",
+                  "type": "text"
+                },
+                {
+                  "key": "publicKey",
+                  "value": "{{ikPublicKey}}",
+                  "type": "text"
+                },
+                {
+                  "key": "token",
+                  "value": "{{ikTokenC}}",
+                  "type": "text"
+                },
+                {
+                  "key": "signature",
+                  "value": "{{ikSignatureC}}",
+                  "type": "text"
+                },
+                {
+                  "key": "expire",
+                  "value": "{{ikExpireC}}",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": "https://upload.imagekit.io/api/v1/files/upload"
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Product CRUD",
+      "item": [
+        {
+          "name": "Product create without image is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('missing mandatory ImageKit asset returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Invalid no-image product\",\"description\":\"Must be rejected\",\"sku\":\"NOIMG-{{runId}}\",\"category\":\"Testing\",\"price\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Create product A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product A is created with URL and file ID', function () { pm.response.to.have.status(201); const data = pm.response.json().product; pm.expect(data.imageUrl).to.eql(pm.collectionVariables.get('imageAUrl')); pm.expect(data.imageFileId).to.eql(pm.collectionVariables.get('imageAFileId')); pm.collectionVariables.set('productAId', data._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Postman Laptop A {{runId}}\",\"description\":\"Integration test laptop A\",\"sku\":\"PM-A-{{runId}}\",\"category\":\"Hardware\",\"price\":80000,\"lowStockLimit\":5,\"supplier\":\"{{supplierId}}\",\"imageUrl\":\"{{imageAUrl}}\",\"imageFileId\":\"{{imageAFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Create product B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product B is created', function () { pm.response.to.have.status(201); const data = pm.response.json().product; pm.expect(data.imageFileId).to.eql(pm.collectionVariables.get('imageBFileId')); pm.collectionVariables.set('productBId', data._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Postman Mouse B {{runId}}\",\"description\":\"Integration test mouse B\",\"sku\":\"PM-B-{{runId}}\",\"category\":\"Hardware\",\"price\":800,\"lowStockLimit\":2,\"supplier\":\"{{supplierId}}\",\"imageUrl\":\"{{imageBUrl}}\",\"imageFileId\":\"{{imageBFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Duplicate product SKU is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('duplicate SKU returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Duplicate SKU {{runId}}\",\"description\":\"Expected to conflict\",\"sku\":\"PM-A-{{runId}}\",\"category\":\"Hardware\",\"price\":1,\"lowStockLimit\":1,\"supplier\":\"{{supplierId}}\",\"imageUrl\":\"{{imageAUrl}}\",\"imageFileId\":\"{{imageAFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "List products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product list is returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().products).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Get product by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product details are returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().product._id).to.eql(pm.collectionVariables.get('productAId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/products/{{productAId}}"
+          }
+        },
+        {
+          "name": "Invalid product ID is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('invalid product ID returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/products/not-an-object-id"
+          }
+        },
+        {
+          "name": "Update product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product update succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().product.price).to.eql(80000); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"price\":80000,\"description\":\"Updated by Postman integration suite\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products/{{productAId}}"
+          }
+        },
+        {
+          "name": "Create disposable product for delete test",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('disposable product is created', function () { pm.response.to.have.status(201); pm.collectionVariables.set('productCId', pm.response.json().product._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Disposable {{runId}}\",\"description\":\"For delete test only\",\"sku\":\"PM-C-{{runId}}\",\"category\":\"Testing\",\"price\":1,\"lowStockLimit\":1,\"imageUrl\":\"{{imageCUrl}}\",\"imageFileId\":\"{{imageCFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Delete disposable product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unreferenced product is deleted', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/products/{{productCId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Warehouses and manager assignment",
+      "item": [
+        {
+          "name": "Create assigned warehouse",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse is created and manager is assigned', function () { pm.response.to.have.status(201); const data = pm.response.json().warehouse; pm.expect(data.managers.map(function (item) { return item._id || item; })).to.include(pm.collectionVariables.get('managerId')); pm.collectionVariables.set('warehouseId', data._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Postman Test Warehouse {{runId}}\",\"code\":\"PM-WH-{{runId}}\",\"location\":\"Test-only location\",\"capacity\":1000,\"manager\":\"{{managerId}}\",\"managers\":[\"{{managerId}}\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/warehouses"
+          }
+        },
+        {
+          "name": "Create unassigned warehouse for authorization test",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unassigned warehouse is created', function () { pm.response.to.have.status(201); pm.collectionVariables.set('unassignedWarehouseId', pm.response.json().warehouse._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Unassigned {{runId}}\",\"code\":\"PM-UN-{{runId}}\",\"location\":\"Test-only location\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/warehouses"
+          }
+        },
+        {
+          "name": "List warehouses as admin",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse list is returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().warehouses).to.be.an('array'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/warehouses"
+          }
+        },
+        {
+          "name": "Get warehouse by ID",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse details are returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().warehouse._id).to.eql(pm.collectionVariables.get('warehouseId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/warehouses/{{warehouseId}}"
+          }
+        },
+        {
+          "name": "Update warehouse and assignment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse update succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().warehouse.capacity).to.eql(2000); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"capacity\":2000,\"manager\":\"{{managerId}}\",\"managers\":[\"{{managerId}}\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/warehouses/{{warehouseId}}"
+          }
+        },
+        {
+          "name": "Invalid manager assignment is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier cannot be assigned as warehouse manager', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"manager\":\"{{supplierId}}\",\"managers\":[\"{{supplierId}}\"]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/warehouses/{{warehouseId}}"
+          }
+        },
+        {
+          "name": "Duplicate warehouse code is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('duplicate warehouse code returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Duplicate Warehouse {{runId}}\",\"code\":\"PM-WH-{{runId}}\",\"location\":\"Duplicate test\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/warehouses"
+          }
+        },
+        {
+          "name": "Create empty warehouse for delete test",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('empty warehouse is created', function () { pm.response.to.have.status(201); pm.collectionVariables.set('emptyWarehouseId', pm.response.json().warehouse._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Empty Delete Test {{runId}}\",\"code\":\"PM-DEL-{{runId}}\",\"location\":\"Test-only location\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/warehouses"
+          }
+        },
+        {
+          "name": "Delete empty warehouse",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('empty warehouse is deleted', function () { pm.response.to.have.status(200); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/warehouses/{{emptyWarehouseId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Stock, low-stock alerts and history",
+      "item": [
+        {
+          "name": "Login as warehouse manager",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager login succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('warehouseManager'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_manager_{{runId}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Manager sees assigned warehouses only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('assigned warehouse is visible', function () { pm.response.to.have.status(200); const ids = pm.response.json().warehouses.map(function (item) { return item._id; }); pm.expect(ids).to.include(pm.collectionVariables.get('warehouseId')); pm.expect(ids).not.to.include(pm.collectionVariables.get('unassignedWarehouseId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/warehouses"
+          }
+        },
+        {
+          "name": "Manager cannot read an unassigned warehouse",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unassigned warehouse details return 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/warehouses/{{unassignedWarehouseId}}"
+          }
+        },
+        {
+          "name": "Stock in product A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('stock-in returns balance 20 and a transaction', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.stock.quantity).to.eql(20); pm.expect(data.transaction.transactionType).to.eql('stock-in'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productAId}}\",\"quantity\":20,\"note\":\"Postman test opening stock\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/in"
+          }
+        },
+        {
+          "name": "Stock in product B",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('second stock-in returns balance 5', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().stock.quantity).to.eql(5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productBId}}\",\"quantity\":5}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/in"
+          }
+        },
+        {
+          "name": "Zero stock quantity is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('nonpositive quantity returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productAId}}\",\"quantity\":0}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/in"
+          }
+        },
+        {
+          "name": "Stock out product A by 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('stock-out returns balance 17 and a transaction', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.stock.quantity).to.eql(17); pm.expect(data.transaction.transactionType).to.eql('stock-out'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productAId}}\",\"quantity\":3}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/out"
+          }
+        },
+        {
+          "name": "Stock out product A by 13",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('stock remains positive at 4', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().stock.quantity).to.eql(4); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productAId}}\",\"quantity\":13}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/out"
+          }
+        },
+        {
+          "name": "Insufficient stock-out is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('stock-out cannot make inventory negative', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productAId}}\",\"quantity\":5}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/out"
+          }
+        },
+        {
+          "name": "Manager cannot change stock in an unassigned warehouse",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('unassigned warehouse access returns 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{unassignedWarehouseId}}\",\"productId\":\"{{productAId}}\",\"quantity\":1}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/in"
+          }
+        },
+        {
+          "name": "Request manager ImageKit upload authentication for product create",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager upload authentication is signed', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data).not.to.have.property('privateKey'); pm.collectionVariables.set('ikTokenD', data.token); pm.collectionVariables.set('ikSignatureD', data.signature); pm.collectionVariables.set('ikExpireD', String(data.expire)); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/upload/auth"
+          }
+        },
+        {
+          "name": "Manager uploads product image for create",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager upload returns URL and file ID', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.url).to.be.a('string'); pm.expect(data.fileId).to.be.a('string'); pm.collectionVariables.set('imageDUrl', data.url); pm.collectionVariables.set('imageDFileId', data.fileId); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "{{imagePath}}" },
+                { "key": "fileName", "value": "postman-manager-product-create-{{runId}}.png", "type": "text" },
+                { "key": "publicKey", "value": "{{ikPublicKey}}", "type": "text" },
+                { "key": "token", "value": "{{ikTokenD}}", "type": "text" },
+                { "key": "signature", "value": "{{ikSignatureD}}", "type": "text" },
+                { "key": "expire", "value": "{{ikExpireD}}", "type": "text" }
+              ]
+            },
+            "url": "https://upload.imagekit.io/api/v1/files/upload"
+          }
+        },
+        {
+          "name": "Request manager ImageKit upload authentication for product update",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager update upload authentication is signed', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data).not.to.have.property('privateKey'); pm.collectionVariables.set('ikTokenE', data.token); pm.collectionVariables.set('ikSignatureE', data.signature); pm.collectionVariables.set('ikExpireE', String(data.expire)); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/upload/auth"
+          }
+        },
+        {
+          "name": "Manager uploads replacement product image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager replacement upload returns URL and file ID', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.url).to.be.a('string'); pm.expect(data.fileId).to.be.a('string'); pm.collectionVariables.set('imageEUrl', data.url); pm.collectionVariables.set('imageEFileId', data.fileId); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "{{imagePath}}" },
+                { "key": "fileName", "value": "postman-manager-product-update-{{runId}}.png", "type": "text" },
+                { "key": "publicKey", "value": "{{ikPublicKey}}", "type": "text" },
+                { "key": "token", "value": "{{ikTokenE}}", "type": "text" },
+                { "key": "signature", "value": "{{ikSignatureE}}", "type": "text" },
+                { "key": "expire", "value": "{{ikExpireE}}", "type": "text" }
+              ]
+            },
+            "url": "https://upload.imagekit.io/api/v1/files/upload"
+          }
+        },
+        {
+          "name": "Manager creates a product with an ImageKit image",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager product creation stores the authenticated image', function () { pm.response.to.have.status(201); const data = pm.response.json(); pm.expect(data.product.imageFileId).to.eql(pm.collectionVariables.get('imageDFileId')); pm.collectionVariables.set('managerProductId', data.product._id || data.product.id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"Manager Product {{runId}}\",\"description\":\"Created by an assigned warehouse manager\",\"sku\":\"PM-MANAGER-{{runId}}\",\"category\":\"Hardware\",\"price\":25,\"lowStockLimit\":3,\"imageUrl\":\"{{imageDUrl}}\",\"imageFileId\":\"{{imageDFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Manager replaces product image through ImageKit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('manager image replacement updates URL and file ID', function () { pm.response.to.have.status(200); const product = pm.response.json().product; pm.expect(product.imageFileId).to.eql(pm.collectionVariables.get('imageEFileId')); pm.expect(product.imageUrl).to.eql(pm.collectionVariables.get('imageEUrl')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"imageUrl\":\"{{imageEUrl}}\",\"imageFileId\":\"{{imageEFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/products/{{managerProductId}}"
+          }
+        },
+        {
+          "name": "Manager cannot delete products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product deletion remains admin-only', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/products/{{managerProductId}}"
+          }
+        },
+        {
+          "name": "Low-stock alert includes product A",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('threshold alert includes quantity 4 product A', function () { pm.response.to.have.status(200); const items = pm.response.json().stock; const row = items.find(function (item) { return (item.product._id || item.product) === pm.collectionVariables.get('productAId'); }); pm.expect(row).to.exist; pm.expect(row.quantity).to.eql(4); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stock/low"
+          }
+        },
+        {
+          "name": "Read stock inventory",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('stock inventory reflects expected balances', function () { pm.response.to.have.status(200); const items = pm.response.json().stock; const a = items.find(function (item) { return (item.product._id || item.product) === pm.collectionVariables.get('productAId'); }); const b = items.find(function (item) { return (item.product._id || item.product) === pm.collectionVariables.get('productBId'); }); pm.expect(a.quantity).to.eql(4); pm.expect(b.quantity).to.eql(5); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stock?warehouseId={{warehouseId}}"
+          }
+        },
+        {
+          "name": "Read transaction history",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('stock transactions are listed and paginated', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.transactions.length).to.be.at.least(4); pm.expect(data.total).to.be.at.least(4); pm.collectionVariables.set('baselineTransactionCount', data.total); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions?page=1&limit=100"
+          }
+        },
+        {
+          "name": "Invalid transaction page size is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('limit above 100 returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions?page=1&limit=101"
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Supplier profile and supply requests",
+      "item": [
+        {
+          "name": "Login as supplier",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier login succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('supplier'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_supplier_{{runId}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Get supplier profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('own supplier profile is returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().supplier.role).to.eql('supplier'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/suppliers/profile"
+          }
+        },
+        {
+          "name": "Supplier sees only own catalog products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier catalog contains its product', function () { pm.response.to.have.status(200); const items = pm.response.json().products; pm.expect(items.some(function (item) { return item._id === pm.collectionVariables.get('productAId'); })).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/products"
+          }
+        },
+        {
+          "name": "Update supplier company and ImageKit logo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier profile stores ImageKit URL and file ID', function () { pm.response.to.have.status(200); const data = pm.response.json().supplier; pm.expect(data.logoUrl).to.eql(pm.collectionVariables.get('imageAUrl')); pm.expect(data.logoFileId).to.eql(pm.collectionVariables.get('imageAFileId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"companyName\":\"Postman Test Supplier {{runId}}\",\"logoUrl\":\"{{imageAUrl}}\",\"logoFileId\":\"{{imageAFileId}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/suppliers/profile"
+          }
+        },
+        {
+          "name": "Submit supply request for own product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supply request is created pending', function () { pm.response.to.have.status(201); const data = pm.response.json().supplyRequest; pm.expect(data.status).to.eql('Pending'); pm.collectionVariables.set('supplyRequestId', data._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"productId\":\"{{productAId}}\",\"warehouseId\":\"{{warehouseId}}\",\"quantity\":7,\"note\":\"Integration test supply request\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/supply-requests"
+          }
+        },
+        {
+          "name": "Supplier sees own supply requests",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier request history is returned', function () { pm.response.to.have.status(200); const requests = pm.response.json().supplyRequests; pm.expect(requests.some(function (item) { return item._id === pm.collectionVariables.get('supplyRequestId'); })).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/supply-requests"
+          }
+        },
+        {
+          "name": "Invalid supply quantity is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('zero supply quantity returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"productId\":\"{{productAId}}\",\"warehouseId\":\"{{warehouseId}}\",\"quantity\":0}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/supply-requests"
+          }
+        },
+        {
+          "name": "Supplier cannot approve own supply request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier status update returns 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/supply-requests/{{supplyRequestId}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Sales orders, status transitions and rollback",
+      "item": [
+        {
+          "name": "Login as sales representative",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sales login succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('salesRepresentative'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_sales_{{runId}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Invalid order quantity is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('invalid line item returns 400', function () { pm.response.to.have.status(400); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"customerName\":\"Test Customer\",\"customerPhone\":\"555-0101\",\"items\":[{\"productId\":\"{{productAId}}\",\"quantity\":0}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Order with insufficient stock is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('insufficient order creation returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"customerName\":\"Test Customer\",\"customerPhone\":\"555-0101\",\"items\":[{\"productId\":\"{{productAId}}\",\"quantity\":999}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Create multi-product pending order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('multi-product order is pending', function () { pm.response.to.have.status(201); const data = pm.response.json().order; pm.expect(data.status).to.eql('Pending'); pm.expect(data.items.length).to.eql(2); pm.collectionVariables.set('orderId', data._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"customerName\":\"Postman Order Customer\",\"customerPhone\":\"555-0102\",\"items\":[{\"productId\":\"{{productAId}}\",\"quantity\":2},{\"productId\":\"{{productBId}}\",\"quantity\":3}],\"note\":\"Multi-product transaction test\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Sales representative lists own orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('own orders include the created order', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().orders.some(function (item) { return item._id === pm.collectionVariables.get('orderId'); })).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Sales representative gets own order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('order details are returned', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().order._id).to.eql(pm.collectionVariables.get('orderId')); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/orders/{{orderId}}"
+          }
+        },
+        {
+          "name": "Sales representative cannot process an order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sales status update returns 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Processing\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}/status"
+          }
+        },
+        {
+          "name": "Create pending order for cancellation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('cancellable order is created', function () { pm.response.to.have.status(201); pm.collectionVariables.set('cancelOrderId', pm.response.json().order._id); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"customerName\":\"Cancel Test Customer\",\"customerPhone\":\"555-0103\",\"items\":[{\"productId\":\"{{productAId}}\",\"quantity\":1}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders"
+          }
+        },
+        {
+          "name": "Cancel pending order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('pending order is cancelled', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().order.status).to.eql('Cancelled'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/orders/{{cancelOrderId}}/cancel"
+          }
+        },
+        {
+          "name": "Cancel an already-cancelled order is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('repeated cancellation returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/orders/{{cancelOrderId}}/cancel"
+          }
+        },
+        {
+          "name": "Login as supplier for order access denial",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier session established', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('supplier'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_supplier_{{runId}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Supplier cannot access sales order list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('supplier order access returns 403', function () { pm.response.to.have.status(403); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/orders"
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Order processing, rollback and duplicate prevention",
+      "item": [
+        {
+          "name": "Login as warehouse manager for order fulfillment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse manager login succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('warehouseManager'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"postman_manager_{{runId}}\",\"password\":\"{{testAccountPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Reduce product B stock to force a mid-order failure",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('B is reduced to 1', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().stock.quantity).to.eql(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productBId}}\",\"quantity\":4}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/out"
+          }
+        },
+        {
+          "name": "Snapshot transactions before failed processing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('pre-failure transaction count is captured', function () { pm.response.to.have.status(200); pm.collectionVariables.set('beforeFailedProcessCount', pm.response.json().total); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions?page=1&limit=100"
+          }
+        },
+        {
+          "name": "Processing fails when a later line lacks stock",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('insufficient second line returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Processing\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}/status"
+          }
+        },
+        {
+          "name": "Failed processing rolls back the first line deduction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('both balances remain unchanged after rollback', function () { pm.response.to.have.status(200); const rows = pm.response.json().stock; const a = rows.find(function (row) { return (row.product._id || row.product) === pm.collectionVariables.get('productAId'); }); const b = rows.find(function (row) { return (row.product._id || row.product) === pm.collectionVariables.get('productBId'); }); pm.expect(a.quantity).to.eql(4); pm.expect(b.quantity).to.eql(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stock?warehouseId={{warehouseId}}"
+          }
+        },
+        {
+          "name": "Failed processing creates no partial transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('transaction count is unchanged by aborted transaction', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().total).to.eql(Number(pm.collectionVariables.get('beforeFailedProcessCount'))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions?page=1&limit=100"
+          }
+        },
+        {
+          "name": "Restock B so the order can proceed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('B is restored to 3', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().stock.quantity).to.eql(3); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"warehouseId\":\"{{warehouseId}}\",\"productId\":\"{{productBId}}\",\"quantity\":2}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/stock/in"
+          }
+        },
+        {
+          "name": "Process multi-product order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('order enters Processing', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().order.status).to.eql('Processing'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Processing\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}/status"
+          }
+        },
+        {
+          "name": "Successful processing deducts each product once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('balances reflect exactly one deduction per line', function () { pm.response.to.have.status(200); const rows = pm.response.json().stock; const a = rows.find(function (row) { return (row.product._id || row.product) === pm.collectionVariables.get('productAId'); }); const b = rows.find(function (row) { return (row.product._id || row.product) === pm.collectionVariables.get('productBId'); }); pm.expect(a.quantity).to.eql(2); pm.expect(b.quantity).to.eql(0); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/stock?warehouseId={{warehouseId}}"
+          }
+        },
+        {
+          "name": "Snapshot transactions after successful processing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('order generated two stock-out transactions', function () { pm.response.to.have.status(200); const data = pm.response.json(); pm.expect(data.total).to.eql(Number(pm.collectionVariables.get('beforeFailedProcessCount')) + 3); pm.collectionVariables.set('afterOrderProcessCount', data.total); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions?page=1&limit=100"
+          }
+        },
+        {
+          "name": "Repeated Processing request is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('duplicate processing returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Processing\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}/status"
+          }
+        },
+        {
+          "name": "Duplicate processing does not add transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('duplicate request left history unchanged', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().total).to.eql(Number(pm.collectionVariables.get('afterOrderProcessCount'))); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/transactions?page=1&limit=100"
+          }
+        },
+        {
+          "name": "Complete processed order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Processing to Completed succeeds', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().order.status).to.eql('Completed'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Completed\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}/status"
+          }
+        },
+        {
+          "name": "Completed order cannot be processed again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('completed order reprocessing returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Processing\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{orderId}}/status"
+          }
+        },
+        {
+          "name": "Cancelled order cannot be processed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('cancelled order processing returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Processing\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/orders/{{cancelOrderId}}/status"
+          }
+        },
+        {
+          "name": "Login as admin to review supply request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('admin session restored', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().user.role).to.eql('admin'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"username\":\"{{adminUsername}}\",\"password\":\"{{adminPassword}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/auth/login"
+          }
+        },
+        {
+          "name": "Admin lists supply requests",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('admin can review submitted requests', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().supplyRequests.some(function (item) { return item._id === pm.collectionVariables.get('supplyRequestId'); })).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/supply-requests"
+          }
+        },
+        {
+          "name": "Admin approves supply request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('pending request is approved', function () { pm.response.to.have.status(200); pm.expect(pm.response.json().supplyRequest.status).to.eql('Approved'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Approved\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/supply-requests/{{supplyRequestId}}/status"
+          }
+        },
+        {
+          "name": "Reviewed supply request cannot be reviewed twice",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('repeated review returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"status\":\"Rejected\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{baseUrl}}/api/supply-requests/{{supplyRequestId}}/status"
+          }
+        },
+        {
+          "name": "Delete warehouse with inventory is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('warehouse with stock/history returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/warehouses/{{warehouseId}}"
+          }
+        },
+        {
+          "name": "Delete product with inventory/history is rejected",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('product with stock/history returns 409', function () { pm.response.to.have.status(409); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/products/{{productAId}}"
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "adminId",
+      "value": ""
+    },
+    {
+      "key": "managerId",
+      "value": ""
+    },
+    {
+      "key": "supplierId",
+      "value": ""
+    },
+    {
+      "key": "salesId",
+      "value": ""
+    },
+    {
+      "key": "deleteUserId",
+      "value": ""
+    },
+    {
+      "key": "publicUsername",
+      "value": ""
+    },
+    {
+      "key": "publicUserId",
+      "value": ""
+    },
+    {
+      "key": "productAId",
+      "value": ""
+    },
+    {
+      "key": "productBId",
+      "value": ""
+    },
+    {
+      "key": "productCId",
+      "value": ""
+    },
+    {
+      "key": "warehouseId",
+      "value": ""
+    },
+    {
+      "key": "unassignedWarehouseId",
+      "value": ""
+    },
+    {
+      "key": "emptyWarehouseId",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "cancelOrderId",
+      "value": ""
+    },
+    {
+      "key": "supplyRequestId",
+      "value": ""
+    },
+    {
+      "key": "ikTokenA",
+      "value": ""
+    },
+    {
+      "key": "ikSignatureA",
+      "value": ""
+    },
+    {
+      "key": "ikExpireA",
+      "value": ""
+    },
+    {
+      "key": "ikTokenB",
+      "value": ""
+    },
+    {
+      "key": "ikSignatureB",
+      "value": ""
+    },
+    {
+      "key": "ikExpireB",
+      "value": ""
+    },
+    {
+      "key": "ikTokenC",
+      "value": ""
+    },
+    {
+      "key": "ikSignatureC",
+      "value": ""
+    },
+    {
+      "key": "ikExpireC",
+      "value": ""
+    },
+    {
+      "key": "ikTokenD",
+      "value": ""
+    },
+    {
+      "key": "ikSignatureD",
+      "value": ""
+    },
+    {
+      "key": "ikExpireD",
+      "value": ""
+    },
+    {
+      "key": "ikTokenE",
+      "value": ""
+    },
+    {
+      "key": "ikSignatureE",
+      "value": ""
+    },
+    {
+      "key": "ikExpireE",
+      "value": ""
+    },
+    {
+      "key": "ikPublicKey",
+      "value": ""
+    },
+    {
+      "key": "imageAUrl",
+      "value": ""
+    },
+    {
+      "key": "imageAFileId",
+      "value": ""
+    },
+    {
+      "key": "imageBUrl",
+      "value": ""
+    },
+    {
+      "key": "imageBFileId",
+      "value": ""
+    },
+    {
+      "key": "imageCUrl",
+      "value": ""
+    },
+    {
+      "key": "imageCFileId",
+      "value": ""
+    },
+    {
+      "key": "imageDUrl",
+      "value": ""
+    },
+    {
+      "key": "imageDFileId",
+      "value": ""
+    },
+    {
+      "key": "imageEUrl",
+      "value": ""
+    },
+    {
+      "key": "imageEFileId",
+      "value": ""
+    },
+    {
+      "key": "managerProductId",
+      "value": ""
+    },
+    {
+      "key": "beforeFailedProcessCount",
+      "value": ""
+    },
+    {
+      "key": "afterOrderProcessCount",
+      "value": ""
+    },
+    {
+      "key": "baselineTransactionCount",
+      "value": ""
+    }
+  ]
+}
